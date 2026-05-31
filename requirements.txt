@@ -3,3 +3,4 @@ pandas
 nltk
 scikit-learn
 numpy
+rich

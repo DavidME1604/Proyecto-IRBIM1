@@ -121,6 +121,41 @@ def mostrar_metricas(model_name: str, metricas: dict, info_qrels: str = ""):
     console.print(Panel(tabla, title=titulo, border_style=ROSA,
                         box=box.ROUNDED, title_align="left"))
 
+def mostrar_evaluacion(resultados_por_modelo: dict, n_queries: int):
+    """
+    Imprime una tabla comparativa de evaluación batch entre modelos.
+
+    Parameters
+    ----------
+    resultados_por_modelo : dict[str, dict]
+        {nombre_modelo: dict devuelto por evaluation.evaluar_modelo()}
+    n_queries : int
+        Número de queries usadas en la evaluación (aparece en el título).
+    """
+    if not resultados_por_modelo:
+        console.print(f"[{ROSA}]No hay resultados para mostrar.[/]")
+        return
+
+    k = next(iter(resultados_por_modelo.values()))['k']
+
+    tabla = Table(box=box.SIMPLE_HEAD, header_style=f"bold {VIOLETA}", expand=True)
+    tabla.add_column("Modelo",      style="white",         width=20)
+    tabla.add_column("MAP",         style=f"bold {ROSA}",  justify="right")
+    tabla.add_column(f"avg P@{k}",  style=f"bold {AZUL}",  justify="right")
+    tabla.add_column(f"avg R@{k}",  style=GRIS,            justify="right")
+
+    for modelo, r in resultados_por_modelo.items():
+        tabla.add_row(
+            modelo,
+            f"{r['map']:.4f}",
+            f"{r['avg_p_at_k']:.4f}",
+            f"{r['avg_r_at_k']:.4f}",
+        )
+
+    titulo = f"[bold {VIOLETA}]Evaluación batch[/] [dim]· {n_queries} queries · k={k}[/]"
+    console.print(Panel(tabla, title=titulo, border_style=ROSA,
+                        box=box.ROUNDED, title_align="left"))
+
 # ─── Entrada del usuario ─────────────────────────────────────────────
 
 def pedir_query() -> str:
@@ -134,15 +169,52 @@ def pedir_modelo() -> str:
 
 # ─── Loop principal ──────────────────────────────────────────────────
 
-def loop_principal():
+def loop_principal(qrels: dict | None = None):
+    """
+    Loop interactivo principal de la CLI.
+
+    Parameters
+    ----------
+    qrels : dict[str, list] | None
+        Diccionario {topic: [doc_ids relevantes]} para evaluación.
+        Si es None, los paneles de métricas no se renderizan.
+    """
     console.clear()
     mostrar_header()
+    if qrels:
+        console.print(f"[{GRIS}]Qrels cargados: {len(qrels)} topics disponibles para evaluación.[/]\n")
 
     while True:
         query = pedir_query()
         if query.lower() == 'salir':
             console.print(f"\n[{VIOLETA}]Hasta luego![/]\n")
             break
+        if query.lower() == 'evaluar':
+
+            # TODO: EVALUACION BATCH
+            # Requiere los modelos conectados (sección "CONECTAR" de abajo).
+            # Patrón:
+            #
+            #   from evaluation import evaluar_modelo
+            #
+            #   retrieve_jaccard = lambda q: jaccard_similarity(
+            #       process_query(q)['processed'], binary_matrix, binary_vec
+            #   )[0]
+            #   retrieve_tfidf   = lambda q: tf_idf_similarity(
+            #       process_query(q)['processed'], tfidf_matrix, vectorizer_tfidf
+            #   )[0]
+            #   # ...mismo patrón para BM25 y semántico
+            #
+            #   with console.status(f"[{VIOLETA}]Ejecutando evaluación batch..."):
+            #       resultados = {
+            #           'Jaccard':       evaluar_modelo(retrieve_jaccard, qrels, df_corpus, K),
+            #           'TF-IDF Coseno': evaluar_modelo(retrieve_tfidf,   qrels, df_corpus, K),
+            #           'BM25':          evaluar_modelo(retrieve_bm25,    qrels, df_corpus, K),
+            #           'Semántico':     evaluar_modelo(retrieve_sem,     qrels, df_corpus, K),
+            #       }
+            #   mostrar_evaluacion(resultados, len(qrels))
+            console.print(f"[{ROSA}]Evaluación batch no conectada todavía.[/]")
+            continue
         if not query:
             console.print(f"[{ROSA}]La consulta no puede estar vacía.[/]\n")
             continue
@@ -195,4 +267,7 @@ def loop_principal():
 
 
 if __name__ == "__main__":
-    loop_principal()
+    from qrels import cargar_qrels
+    CSV_PATH = r"ModApte_train.csv"
+    qrels = cargar_qrels(CSV_PATH)
+    loop_principal(qrels)

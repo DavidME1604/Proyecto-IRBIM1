@@ -22,6 +22,9 @@ from rich.prompt import Prompt
 from rich.align import Align
 from rich import box
 from metrics import precision_at_k, recall_at_k, average_precision
+from proyecto_recuperacion import (
+    process_query, jaccard_similarity, tf_idf_similarity,
+)
 
 # ─── Configuración ───────────────────────────────────────────────────
 
@@ -166,18 +169,60 @@ def pedir_modelo() -> str:
     return Prompt.ask(f"[bold {VIOLETA}]Seleccione modelo[/]",
                       choices=list(MODELOS.keys()), show_choices=False).strip()
 
+# ─── Ejecución de modelos ─────────────────────────────────────────────
+def ejecutar_modelo(nombre: str, retrieve_fn, query: str,
+                    df_corpus, qrels: dict | None):
+    """
+    Corre un modelo, muestra resultados, y muestra métricas si la query
+    coincide con un topic con qrels.
 
+    Parameters
+    ----------
+    nombre : str
+        Nombre del modelo (aparece en los títulos de los paneles).
+    retrieve_fn : callable
+        query_procesada -> (ranking, scores). Envuelve la firma específica
+        del modelo (matrices, vectorizadores, etc.) en un closure/lambda.
+    query : str
+        Texto crudo ingresado por el usuario.
+    """
+    query_proc = process_query(query)['processed']
+    ranking, scores = retrieve_fn(query_proc)
+
+    resultados = [
+        (i + 1, df_corpus.loc[idx, 'doc_id'], scores[idx], df_corpus.loc[idx, 'title'])
+        for i, idx in enumerate(ranking[:K])
+    ]
+    mostrar_resultados(nombre, query, resultados)
+
+    if qrels and query.lower() in qrels:
+        relevantes = qrels[query.lower()]
+        doc_ids_ranking = [df_corpus.loc[idx, 'doc_id'] for idx in ranking]
+        metricas = {
+            f'P@{K}': precision_at_k(doc_ids_ranking, relevantes, K),
+            f'R@{K}': recall_at_k(doc_ids_ranking, relevantes, K),
+            'AP':     average_precision(doc_ids_ranking, relevantes),
+        }
+        mostrar_metricas(nombre, metricas,
+                         f"qrels: '{query.lower()}' · {len(relevantes)} docs")
+        
 # ─── Loop principal ──────────────────────────────────────────────────
 
-def loop_principal(qrels: dict | None = None):
+def loop_principal(qrels: dict | None, df_corpus, recursos: dict):
     """
     Loop interactivo principal de la CLI.
 
     Parameters
     ----------
     qrels : dict[str, list] | None
-        Diccionario {topic: [doc_ids relevantes]} para evaluación.
-        Si es None, los paneles de métricas no se renderizan.
+        {topic: [doc_ids relevantes]} para evaluación. Si es None,
+        las métricas no se muestran.
+    df_corpus : pd.DataFrame
+        Corpus indexado con columnas 'doc_id', 'title', 'processed'.
+    recursos : dict
+        Matrices y vectorizadores precomputados. Claves esperadas:
+            'binary_matrix', 'binary_vec' (Jaccard)
+            'tfidf_matrix',  'tfidf_vec'  (TF-IDF)
     """
     console.clear()
     mostrar_header()
@@ -232,28 +277,17 @@ def loop_principal(qrels: dict | None = None):
         # ─────────────────────────────────────────────────────────────
 
         if opcion in ('1', '5'):
-            # TODO: CONECTAR Jaccard
-            # ranking, scores = jaccard_similarity(query_proc, binary_matrix, binary_vec)
-            # resultados = [(i+1, df.loc[idx,'doc_id'], scores[idx], df.loc[idx,'title'])
-            #               for i, idx in enumerate(ranking[:K])]
-            resultados = None
-            mostrar_resultados("Jaccard", query, resultados)
-                # TODO: METRICAS Jaccard (sólo si la query coincide con un topic con qrels)
-                # if query.lower() in qrels:
-                #     relevantes = qrels[query.lower()]
-                #     doc_ids_ranking = [df.loc[idx, 'doc_id'] for idx in ranking]
-                #     metricas = {
-                #         f'P@{K}': precision_at_k(doc_ids_ranking, relevantes, K),
-                #         f'R@{K}': recall_at_k(doc_ids_ranking, relevantes, K),
-                #         'AP':     average_precision(doc_ids_ranking, relevantes),
-                #     }
-                #     mostrar_metricas("Jaccard", metricas,
-                #                      f"qrels: '{query.lower()}' · {len(relevantes)} docs")
-
+            ejecutar_modelo(
+                "Jaccard",
+                lambda q: jaccard_similarity(q, recursos['binary_matrix'], recursos['binary_vec']),
+                query, df_corpus, qrels,
+            )
         if opcion in ('2', '5'):
-            # TODO: CONECTAR TF-IDF
-            resultados = None
-            mostrar_resultados("TF-IDF Coseno", query, resultados)
+            ejecutar_modelo(
+                "TF-IDF Coseno",
+                lambda q: tf_idf_similarity(q, recursos['tfidf_matrix'], recursos['tfidf_vec']),
+                query, df_corpus, qrels,
+            )
 
         if opcion in ('3', '5'):
             # TODO: CONECTAR BM25
@@ -267,7 +301,21 @@ def loop_principal(qrels: dict | None = None):
 
 
 if __name__ == "__main__":
+    from proyecto_recuperacion import (
+        process_corpus, build_binary_matrix, build_tfidf_matrix,
+    )
     from qrels import cargar_qrels
     CSV_PATH = r"ModApte_train.csv"
-    qrels = cargar_qrels(CSV_PATH)
-    loop_principal(qrels)
+    with console.status(f"[{VIOLETA}]Cargando corpus..."):
+        df_corpus = process_corpus(CSV_PATH)
+    with console.status(f"[{VIOLETA}]Construyendo índices..."):
+        binary_matrix, binary_vec = build_binary_matrix(df_corpus)
+        tfidf_matrix,  tfidf_vec  = build_tfidf_matrix(df_corpus)
+    with console.status(f"[{VIOLETA}]Cargando qrels..."):
+        qrels = cargar_qrels(CSV_PATH)
+    recursos = {
+        'binary_matrix': binary_matrix, 'binary_vec': binary_vec,
+        'tfidf_matrix':  tfidf_matrix,  'tfidf_vec':  tfidf_vec,
+    }
+
+    loop_principal(qrels, df_corpus, recursos)

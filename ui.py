@@ -21,7 +21,7 @@ from rich.text import Text
 from rich.prompt import Prompt
 from rich.align import Align
 from rich import box
-
+from metrics import precision_at_k, recall_at_k, average_precision
 
 # ─── Configuración ───────────────────────────────────────────────────
 
@@ -97,6 +97,30 @@ def mostrar_resultados(model_name: str, query: str, resultados):
                         box=box.ROUNDED, title_align="left"))
 
 
+def mostrar_metricas(model_name: str, metricas: dict, info_qrels: str = ""):
+    """
+    Imprime un panel compacto con métricas de evaluación para una consulta.
+
+    Parameters
+    ----------
+    model_name : str
+        Nombre del modelo (aparece en el título).
+    metricas : dict[str, float]
+        Diccionario {nombre: valor}, ej: {'P@10': 0.6, 'R@10': 0.3, 'AP': 0.42}.
+    info_qrels : str
+        Texto opcional para el título, ej: "qrels: 'earn' · 2877 docs".
+    """
+    tabla = Table(box=box.SIMPLE, header_style=f"bold {VIOLETA}", expand=True)
+    for nombre in metricas:
+        tabla.add_column(nombre, justify="center", style=f"bold {ROSA}")
+    tabla.add_row(*[f"{v:.4f}" for v in metricas.values()])
+
+    titulo = f"[bold {VIOLETA}]Métricas — {model_name}[/]"
+    if info_qrels:
+        titulo += f" [dim]· {info_qrels}[/]"
+    console.print(Panel(tabla, title=titulo, border_style=ROSA,
+                        box=box.ROUNDED, title_align="left"))
+
 # ─── Entrada del usuario ─────────────────────────────────────────────
 
 def pedir_query() -> str:
@@ -142,6 +166,17 @@ def loop_principal():
             #               for i, idx in enumerate(ranking[:K])]
             resultados = None
             mostrar_resultados("Jaccard", query, resultados)
+                # TODO: METRICAS Jaccard (sólo si la query coincide con un topic con qrels)
+                # if query.lower() in qrels:
+                #     relevantes = qrels[query.lower()]
+                #     doc_ids_ranking = [df.loc[idx, 'doc_id'] for idx in ranking]
+                #     metricas = {
+                #         f'P@{K}': precision_at_k(doc_ids_ranking, relevantes, K),
+                #         f'R@{K}': recall_at_k(doc_ids_ranking, relevantes, K),
+                #         'AP':     average_precision(doc_ids_ranking, relevantes),
+                #     }
+                #     mostrar_metricas("Jaccard", metricas,
+                #                      f"qrels: '{query.lower()}' · {len(relevantes)} docs")
 
         if opcion in ('2', '5'):
             # TODO: CONECTAR TF-IDF

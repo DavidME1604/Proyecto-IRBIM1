@@ -1,6 +1,8 @@
 kagglehub
 pandas
 nltk
-scikit-learn
 numpy
 rich
+sentence-transformers
+faiss-cpu
+joblib

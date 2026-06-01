@@ -5,6 +5,7 @@ Sistema que compara 4 modelos de recuperación (Jaccard, TF-IDF, BM25 y semánti
 ## Requisitos
 
 - Python 3.10+
+- Cuenta en [Kaggle](https://www.kaggle.com) con el archivo de credenciales configurado en `~/.kaggle/kaggle.json` (se obtiene desde *Settings → API → Create New Token*)
 
 ## Instalación
 

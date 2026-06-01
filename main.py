@@ -22,9 +22,8 @@ from rich.prompt import Prompt
 from rich.align import Align
 from rich import box
 from metrics import precision_at_k, recall_at_k, average_precision
-from proyecto_recuperacion import (
-    process_query, jaccard_similarity, tf_idf_similarity,
-)
+from models import JaccardModel, TFIDFModel, BM25Model, SemanticModel
+from preprocessing import load_or_build, process_raw 
 
 # ─── Configuración ───────────────────────────────────────────────────
 
@@ -170,8 +169,8 @@ def pedir_modelo() -> str:
                       choices=list(MODELOS.keys()), show_choices=False).strip()
 
 # ─── Ejecución de modelos ─────────────────────────────────────────────
-def ejecutar_modelo(nombre: str, retrieve_fn, query: str,
-                    df_corpus, qrels: dict | None):
+def ejecutar_modelo(modelo, nombre: str, query: str,
+                    df_corpus, qrels: dict | None, es_semantico: bool):
     """
     Corre un modelo, muestra resultados, y muestra métricas si la query
     coincide con un topic con qrels.
@@ -186,8 +185,12 @@ def ejecutar_modelo(nombre: str, retrieve_fn, query: str,
     query : str
         Texto crudo ingresado por el usuario.
     """
-    query_proc = process_query(query)['processed']
-    ranking, scores = retrieve_fn(query_proc)
+    if es_semantico:
+        query_proc = query
+    else:
+        query_proc = ' '.join(process_raw(query))
+
+    ranking, scores = modelo.search(query_proc, top_n=K)
 
     resultados = [
         (i + 1, df_corpus.loc[idx, 'doc_id'], scores[idx], df_corpus.loc[idx, 'title'])
@@ -208,7 +211,7 @@ def ejecutar_modelo(nombre: str, retrieve_fn, query: str,
         
 # ─── Loop principal ──────────────────────────────────────────────────
 
-def loop_principal(qrels: dict | None, df_corpus, recursos: dict):
+def loop_principal(qrels: dict | None, df_corpus, modelos: dict):
     """
     Loop interactivo principal de la CLI.
 
@@ -219,10 +222,10 @@ def loop_principal(qrels: dict | None, df_corpus, recursos: dict):
         las métricas no se muestran.
     df_corpus : pd.DataFrame
         Corpus indexado con columnas 'doc_id', 'title', 'processed'.
-    recursos : dict
-        Matrices y vectorizadores precomputados. Claves esperadas:
-            'binary_matrix', 'binary_vec' (Jaccard)
-            'tfidf_matrix',  'tfidf_vec'  (TF-IDF)
+    modelos : dict
+        Objeto con los modelos de recuperación construidos, en formato:
+        {nombre_modelo: (modelo, es_semántico)}, donde `modelo` es un
+        objeto con método `search(query_procesada) -> (ranking, scores)`
     """
     console.clear()
     mostrar_header()
@@ -235,31 +238,20 @@ def loop_principal(qrels: dict | None, df_corpus, recursos: dict):
             console.print(f"\n[{VIOLETA}]Hasta luego![/]\n")
             break
         if query.lower() == 'evaluar':
+            if query.lower() == 'evaluar':
+                from evaluation import evaluar_modelo
 
-            # TODO: EVALUACION BATCH
-            # Requiere los modelos conectados (sección "CONECTAR" de abajo).
-            # Patrón:
-            #
-            #   from evaluation import evaluar_modelo
-            #
-            #   retrieve_jaccard = lambda q: jaccard_similarity(
-            #       process_query(q)['processed'], binary_matrix, binary_vec
-            #   )[0]
-            #   retrieve_tfidf   = lambda q: tf_idf_similarity(
-            #       process_query(q)['processed'], tfidf_matrix, vectorizer_tfidf
-            #   )[0]
-            #   # ...mismo patrón para BM25 y semántico
-            #
-            #   with console.status(f"[{VIOLETA}]Ejecutando evaluación batch..."):
-            #       resultados = {
-            #           'Jaccard':       evaluar_modelo(retrieve_jaccard, qrels, df_corpus, K),
-            #           'TF-IDF Coseno': evaluar_modelo(retrieve_tfidf,   qrels, df_corpus, K),
-            #           'BM25':          evaluar_modelo(retrieve_bm25,    qrels, df_corpus, K),
-            #           'Semántico':     evaluar_modelo(retrieve_sem,     qrels, df_corpus, K),
-            #       }
-            #   mostrar_evaluacion(resultados, len(qrels))
-            console.print(f"[{ROSA}]Evaluación batch no conectada todavía.[/]")
-            continue
+                with console.status(f"[{VIOLETA}]Ejecutando evaluación batch..."):
+                    resultados = {}
+                    for nombre, (modelo, es_sem) in modelos.items():
+                        if es_sem:
+                            retrieve_fn = lambda q, m=modelo: m.search(q)[0]
+                        else:
+                            retrieve_fn = lambda q, m=modelo: m.search(' '.join(process_raw(q)))[0]
+                        resultados[nombre] = evaluar_modelo(retrieve_fn, qrels, df_corpus, K)
+
+                mostrar_evaluacion(resultados, len(qrels))
+                continue
         if not query:
             console.print(f"[{ROSA}]La consulta no puede estar vacía.[/]\n")
             continue
@@ -276,46 +268,35 @@ def loop_principal(qrels: dict | None, df_corpus, recursos: dict):
         # None, el panel muestra un placeholder.
         # ─────────────────────────────────────────────────────────────
 
-        if opcion in ('1', '5'):
-            ejecutar_modelo(
-                "Jaccard",
-                lambda q: jaccard_similarity(q, recursos['binary_matrix'], recursos['binary_vec']),
-                query, df_corpus, qrels,
-            )
-        if opcion in ('2', '5'):
-            ejecutar_modelo(
-                "TF-IDF Coseno",
-                lambda q: tf_idf_similarity(q, recursos['tfidf_matrix'], recursos['tfidf_vec']),
-                query, df_corpus, qrels,
-            )
-
-        if opcion in ('3', '5'):
-            # TODO: CONECTAR BM25
-            resultados = None
-            mostrar_resultados("BM25", query, resultados)
-
-        if opcion in ('4', '5'):
-            # TODO: CONECTAR Semántico (embeddings)
-            resultados = None
-            mostrar_resultados("Semántico", query, resultados)
+        
+        if opcion == '5':
+            for nombre, (modelo, es_sem) in modelos.items():
+                ejecutar_modelo(modelo, nombre, query, df_corpus, qrels, es_sem)
+        else:
+            nombre = MODELOS[opcion]
+            if nombre in modelos:
+                modelo, es_sem = modelos[nombre]
+                ejecutar_modelo(modelo, nombre, query, df_corpus, qrels, es_sem)
 
 
 if __name__ == "__main__":
-    from proyecto_recuperacion import (
-        process_corpus, build_binary_matrix, build_tfidf_matrix,
-    )
+
     from qrels import cargar_qrels
-    CSV_PATH = r"ModApte_train.csv"
     with console.status(f"[{VIOLETA}]Cargando corpus..."):
-        df_corpus = process_corpus(CSV_PATH)
-    with console.status(f"[{VIOLETA}]Construyendo índices..."):
-        binary_matrix, binary_vec = build_binary_matrix(df_corpus)
-        tfidf_matrix,  tfidf_vec  = build_tfidf_matrix(df_corpus)
+        df_corpus, inv_index, path = load_or_build()
+    with console.status(f"[{VIOLETA}]Construyendo modelos..."):
+        jaccard  = JaccardModel(df_corpus, inv_index)
+        tfidf    = TFIDFModel(df_corpus, inv_index)
+        bm25     = BM25Model(df_corpus, inv_index)
+        semantic = SemanticModel(df_corpus)
+        
     with console.status(f"[{VIOLETA}]Cargando qrels..."):
-        qrels = cargar_qrels(CSV_PATH)
-    recursos = {
-        'binary_matrix': binary_matrix, 'binary_vec': binary_vec,
-        'tfidf_matrix':  tfidf_matrix,  'tfidf_vec':  tfidf_vec,
+        qrels = cargar_qrels(path)
+    modelos = {
+        'Jaccard':       (jaccard,  False),
+        'TF-IDF Coseno': (tfidf,    False),
+        'BM25':          (bm25,     False),
+        'Semántico':     (semantic, True),
     }
 
-    loop_principal(qrels, df_corpus, recursos)
+    loop_principal(qrels, df_corpus, modelos)

@@ -1,6 +1,7 @@
 
 ModApte_train.csv
 __pycache__/
-
+cache/
+faiss_index.bin
 
 
